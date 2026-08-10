@@ -18,3 +18,8 @@ docs/
 .env
 .env.*
 !.env.example
+
+# Local secrets
+.env
+frontend/.env
+frontend/.env.local
