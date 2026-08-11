@@ -422,3 +422,51 @@ input[type="file"] { padding: 9px; }
   .bid-row > :last-child { grid-column: auto; }
   .inline-bid-controls { grid-template-columns: 1fr; }
 }
+
+/* --------------------------------------------------------------------------
+   Checkpoint 5: event-driven auto-sync
+   -------------------------------------------------------------------------- */
+
+.live-sync-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.live-sync-card::after {
+  content: "";
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  right: -55px;
+  top: -55px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(98, 224, 182, .18), transparent 68%);
+  pointer-events: none;
+}
+
+.event-data-list {
+  margin-bottom: 16px;
+}
+
+.live-note {
+  border-left-color: var(--accent);
+  background: rgba(98, 224, 182, .07);
+}
+
+.live-flash {
+  animation: liveFlash .9s ease-out;
+}
+
+@keyframes liveFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(98, 224, 182, .5), 0 14px 40px rgba(0, 0, 0, .2);
+    border-color: rgba(98, 224, 182, .95);
+  }
+  45% {
+    box-shadow: 0 0 0 8px rgba(98, 224, 182, .08), 0 14px 40px rgba(0, 0, 0, .2);
+  }
+  100% {
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .2);
+    border-color: var(--border);
+  }
+}

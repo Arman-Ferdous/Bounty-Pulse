@@ -1,0 +1,3 @@
+# Local browser configuration generated from the root .env.
+# Contains the deployed address and a browser-readable Pinata JWT.
+config.local.js
