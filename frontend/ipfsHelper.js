@@ -7,7 +7,7 @@
  *   1. Upload the heavy file to Pinata/IPFS.
  *   2. Return only the CID so app.js can store it in BountyPulse.sol.
  *
- * Local-lab security note:
+ * Checkpoint-only security note:
  * The project manual uses a JWT directly in browser JavaScript. This version
  * keeps it in ignored config.local.js instead of committing it. A production
  * DApp should replace this with a server-created presigned upload URL.
@@ -102,7 +102,7 @@
     const pinName = String(options.name || file.name || `bountypulse-${Date.now()}`);
     const keyvalues = {
       application: "BountyPulse",
-      checkpoint: "4",
+      checkpoint: "3",
       ...(options.keyvalues || {})
     };
 

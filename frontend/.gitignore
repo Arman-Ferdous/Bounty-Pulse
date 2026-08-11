@@ -1,0 +1,2 @@
+# Contains the deployed contract address and local Pinata JWT.
+config.local.js
