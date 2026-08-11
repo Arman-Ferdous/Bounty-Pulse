@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="BountyPulse Checkpoint 4 marketplace feed, escrow, and pull payments">
+  <title>BountyPulse — Checkpoint 4</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">BP</div>
+        <div>
+          <h1>BountyPulse</h1>
+          <p>Checkpoint 4 · Feed, Escrow & Pull Payments</p>
+        </div>
+      </div>
+      <span id="connectionBadge" class="status-badge status-info">Initializing</span>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">Read on-chain · Decide off-chain · Pay exact escrow</p>
+            <h2>Turn the Registry into a working bounty marketplace.</h2>
+            <p class="hero-copy">
+              Ethers.js pulls bounties and bids from BountyPulse, JavaScript sorts them without
+              sending a transaction, the Client funds the chosen quote with the exact bid value,
+              and earned ETH remains in the pull-payment ledger until Claim Funds is pressed.
+            </p>
+          </div>
+          <div class="pipeline" aria-label="Checkpoint 4 flow">
+            <div class="pipeline-step"><span class="step-number">1</span><span><strong>Fetch</strong> bounty + bid Registry data</span></div>
+            <div class="pipeline-step"><span class="step-number">2</span><span><strong>Sort</strong> locally in JavaScript</span></div>
+            <div class="pipeline-step"><span class="step-number">3</span><span><strong>Bid</strong> with a non-payable quote</span></div>
+            <div class="pipeline-step"><span class="step-number">4</span><span><strong>Escrow</strong> the exact selected bid</span></div>
+            <div class="pipeline-step"><span class="step-number">5</span><span><strong>Claim</strong> accumulated pull-payment funds</span></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="appAlert" class="app-alert alert-info" hidden></div>
+
+      <section class="grid two">
+        <article class="card">
+          <div class="card-header">
+            <h3>Wallet & on-chain Registry</h3>
+            <p>The active MetaMask address is detected directly; no wallet-address input is used.</p>
+          </div>
+          <div class="card-body">
+            <div class="wallet-layout">
+              <div>
+                <img id="profileAvatar" class="profile-avatar" hidden alt="">
+                <div class="profile-placeholder" aria-hidden="true">◎</div>
+              </div>
+              <dl class="data-list">
+                <div class="data-row"><dt>Account</dt><dd id="accountValue">Not connected</dd></div>
+                <div class="data-row"><dt>Network</dt><dd id="chainValue">Unknown</dd></div>
+                <div class="data-row"><dt>Role</dt><dd id="roleValue">Unknown</dd></div>
+                <div class="data-row"><dt>Profile</dt><dd id="profileNameValue">Unknown</dd></div>
+                <div class="data-row"><dt>Reputation</dt><dd id="reputationValue">Unknown</dd></div>
+              </dl>
+            </div>
+            <div class="actions">
+              <button id="connectWalletBtn" class="btn btn-primary" type="button">Connect MetaMask</button>
+              <button id="switchNetworkBtn" class="btn btn-secondary" type="button">Switch to Anvil</button>
+              <button id="testPinataBtn" class="btn btn-ghost" type="button">Test Pinata JWT</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header role-title">
+            <div>
+              <h3>Checkpoint 4 boundary</h3>
+              <p>Marketplace reads and transactions are complete; cross-window event syncing comes next.</p>
+            </div>
+            <span class="role-chip">CP4</span>
+          </div>
+          <div class="card-body">
+            <div class="note">
+              This tab refreshes its own data after a transaction receipt and also provides a manual
+              <strong>Refresh from chain</strong> button. It intentionally has no
+              <code>contract.on(...)</code> listeners yet. Therefore a transaction made in another browser
+              window will not appear here automatically—that is the exact problem Checkpoint 5 solves.
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section id="marketplacePanel" class="card role-panel">
+        <div class="card-header marketplace-header">
+          <div>
+            <h3>On-chain Bounty Registry</h3>
+            <p id="feedState">Connect MetaMask to fetch bounty and bid data.</p>
+          </div>
+          <div class="feed-controls">
+            <label>
+              Status
+              <select id="statusFilter">
+                <option value="active" selected>All active</option>
+                <option value="0">Open only</option>
+                <option value="1">Locked</option>
+                <option value="2">Submitted</option>
+                <option value="3">Disputed</option>
+                <option value="4">Resolved</option>
+                <option value="all">All statuses</option>
+              </select>
+            </label>
+            <label>
+              Sort
+              <select id="sortSelect">
+                <option value="budget-desc" selected>Highest budget first</option>
+                <option value="budget-asc">Lowest budget first</option>
+                <option value="id-desc">Newest first</option>
+                <option value="id-asc">Oldest first</option>
+              </select>
+            </label>
+            <button id="refreshFeedBtn" class="btn btn-secondary" type="button">Refresh from chain</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="feed-summary">
+            <span id="feedCount">0 shown / 0 total</span>
+            <span id="sortGasNote">Sorting runs in JavaScript after the view data has been fetched.</span>
+          </div>
+          <div id="bountyFeed" class="bounty-feed">
+            <div class="empty-state">
+              <strong>Connect MetaMask</strong>
+              <span>The feed is loaded directly from BountyPulse.sol after connection.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="earningsPanel" class="card role-panel" hidden>
+        <div class="card-header role-title">
+          <div>
+            <h3>Unclaimed Earnings</h3>
+            <p>Reads <code>withdrawableBalances(activeAccount)</code> from the pull-payment ledger.</p>
+          </div>
+          <span class="role-chip">Pull Payment</span>
+        </div>
+        <div class="card-body earnings-layout">
+          <div>
+            <span class="earnings-label">Available now</span>
+            <strong id="unclaimedEarnings" class="earnings-amount">0 ETH</strong>
+            <span id="earningsWei" class="field-help">0 Wei</span>
+          </div>
+          <div>
+            <button id="claimFundsBtn" class="btn btn-primary" type="button" disabled>Claim Funds</button>
+            <p class="field-help">
+              Approval does not automatically pay the Freelancer or Arbiter. This transaction withdraws
+              the caller's accumulated balance to the active MetaMask wallet.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="registrationPanel" class="card role-panel" hidden>
+        <div class="card-header role-title">
+          <div>
+            <h3>Register profile</h3>
+            <p>Avatar file → Pinata CID → <code>registerUser(name, role, CID)</code>.</p>
+          </div>
+          <span class="role-chip">Registry</span>
+        </div>
+        <div class="card-body">
+          <form id="registrationForm">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="registerName">Name</label>
+                <input id="registerName" maxlength="80" required placeholder="Arman Ferdous">
+              </div>
+              <div class="form-field">
+                <label for="registerRole">Role</label>
+                <select id="registerRole" required></select>
+                <span id="registrationRoleHelp" class="field-help"></span>
+              </div>
+              <div class="form-field full">
+                <label for="avatarFile">Profile avatar image</label>
+                <input id="avatarFile" type="file" accept="image/*" required>
+                <span class="field-help">The image stays on IPFS; only its CID enters the smart contract.</span>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Upload Avatar & Register</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="clientPanel" class="card role-panel" hidden>
+        <div class="card-header role-title">
+          <div>
+            <h3>Client controls</h3>
+            <p>Post new bounties here. Your Open bounty cards above expose one exact-payment button per submitted bid.</p>
+          </div>
+          <span class="role-chip">Client</span>
+        </div>
+        <div class="card-body">
+          <form id="postBountyForm">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="bountyTitle">Bounty title</label>
+                <input id="bountyTitle" maxlength="120" required placeholder="Build a responsive landing page">
+              </div>
+              <div class="form-field">
+                <label for="maxBudgetEth">Maximum budget (ETH)</label>
+                <input id="maxBudgetEth" type="number" min="0" step="0.000000000000000001" required placeholder="1.25">
+                <span class="field-help">Converted to Wei with <code>ethers.parseEther</code>.</span>
+              </div>
+              <div class="form-field full">
+                <label for="bountyDescription">Description</label>
+                <textarea id="bountyDescription" required placeholder="Describe deliverables, constraints, and acceptance criteria."></textarea>
+              </div>
+              <div class="form-field full">
+                <label for="bountyAttachment">Optional requirements attachment</label>
+                <input id="bountyAttachment" type="file">
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Upload Details & Post Bounty</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="freelancerPanel" class="card role-panel" hidden>
+        <div class="card-header role-title">
+          <div>
+            <h3>Freelancer controls</h3>
+            <p>Submit quotes directly from Open bounty cards. When selected and funded, upload the finished work here.</p>
+          </div>
+          <span class="role-chip">Freelancer</span>
+        </div>
+        <div class="card-body">
+          <form id="submitWorkForm">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="workBountyId">Locked bounty ID</label>
+                <input id="workBountyId" type="number" min="1" step="1" required placeholder="1">
+              </div>
+              <div class="form-field">
+                <label for="workFile">Completed work file</label>
+                <input id="workFile" type="file" required>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Upload Work & Submit CID</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="arbiterPanel" class="card role-panel" hidden>
+        <div class="card-header role-title">
+          <div>
+            <h3>Arbiter controls</h3>
+            <p>Disputed bounty cards expose both resolution outcomes directly in the feed.</p>
+          </div>
+          <span class="role-chip">Arbiter</span>
+        </div>
+        <div class="card-body">
+          <div class="note">
+            For a Disputed bounty, choose <strong>Freelancer at fault</strong> to refund the Client and
+            apply the reputation penalty, or <strong>Client at fault</strong> to credit the Freelancer's
+            withdrawable balance minus the 2% protocol fee.
+          </div>
+        </div>
+      </section>
+
+      <section id="lastUploadPanel" class="card role-panel" hidden>
+        <div class="card-header">
+          <h3>Latest IPFS result</h3>
+          <p>Checkpoint 3's upload proof remains available while using the Checkpoint 4 marketplace.</p>
+        </div>
+        <div class="card-body upload-summary">
+          <div class="cid-box"><strong>CID:</strong> <span id="lastCid"></span></div>
+          <dl class="data-list">
+            <div class="data-row"><dt>File</dt><dd id="lastFileName"></dd></div>
+            <div class="data-row"><dt>MIME type</dt><dd id="lastMimeType"></dd></div>
+            <div class="data-row"><dt>CID length</dt><dd id="lastCidLength"></dd></div>
+            <div class="data-row"><dt>Gateway</dt><dd><a id="lastGatewayLink" target="_blank" rel="noreferrer"></a></dd></div>
+          </dl>
+          <div id="lastUploadPreview" class="gateway-preview"></div>
+        </div>
+      </section>
+
+      <section class="card role-panel">
+        <div class="card-header role-title">
+          <div>
+            <h3>Activity log</h3>
+            <p>Use this during the viva to show the selected bid value, escrow verification, and claim verification.</p>
+          </div>
+          <button id="clearLogBtn" class="btn btn-ghost" type="button">Clear</button>
+        </div>
+        <div class="card-body">
+          <ul id="activityLog" class="activity-list">
+            <li class="muted">Waiting for initialization…</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      Local development only · Anvil Chain ID 31337 · Ethers.js v6 · Pinata/IPFS
+    </footer>
+  </div>
+
+  <div id="busyOverlay" class="busy-overlay" hidden>
+    <div class="busy-box">
+      <div class="spinner" aria-hidden="true"></div>
+      <strong id="busyMessage">Working…</strong>
+      <p class="muted">Keep MetaMask open when a signature is requested.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.17.0/dist/ethers.umd.min.js"></script>
+  <script src="./config.local.js"></script>
+  <script src="./ipfsHelper.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
