@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="BountyPulse Checkpoint 4 marketplace feed, escrow, and pull payments">
-  <title>BountyPulse — Checkpoint 4</title>
+  <meta name="description" content="BountyPulse Checkpoint 5 live event auto-syncing DApp">
+  <title>BountyPulse — Checkpoint 5</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
         <div class="brand-mark">BP</div>
         <div>
           <h1>BountyPulse</h1>
-          <p>Checkpoint 4 · Feed, Escrow & Pull Payments</p>
+          <p>Checkpoint 5 · Live Event Auto-Sync</p>
         </div>
       </div>
       <span id="connectionBadge" class="status-badge status-info">Initializing</span>
@@ -24,20 +24,20 @@
       <section class="hero">
         <div class="hero-grid">
           <div>
-            <p class="eyebrow">Read on-chain · Decide off-chain · Pay exact escrow</p>
-            <h2>Turn the Registry into a working bounty marketplace.</h2>
+            <p class="eyebrow">Listen on-chain · Re-fetch state · Re-render automatically</p>
+            <h2>A fully event-driven BountyPulse DApp.</h2>
             <p class="hero-copy">
-              Ethers.js pulls bounties and bids from BountyPulse, JavaScript sorts them without
-              sending a transaction, the Client funds the chosen quote with the exact bid value,
-              and earned ETH remains in the pull-payment ledger until Claim Funds is pressed.
+              Every state-changing workflow from Checkpoints 1–4 remains intact. Now Ethers.js
+              listens for BountyPulse events and automatically re-fetches the affected on-chain view
+              data, so a transaction in one browser window updates the other window without a hard reload.
             </p>
           </div>
-          <div class="pipeline" aria-label="Checkpoint 4 flow">
-            <div class="pipeline-step"><span class="step-number">1</span><span><strong>Fetch</strong> bounty + bid Registry data</span></div>
-            <div class="pipeline-step"><span class="step-number">2</span><span><strong>Sort</strong> locally in JavaScript</span></div>
-            <div class="pipeline-step"><span class="step-number">3</span><span><strong>Bid</strong> with a non-payable quote</span></div>
-            <div class="pipeline-step"><span class="step-number">4</span><span><strong>Escrow</strong> the exact selected bid</span></div>
-            <div class="pipeline-step"><span class="step-number">5</span><span><strong>Claim</strong> accumulated pull-payment funds</span></div>
+          <div class="pipeline" aria-label="Checkpoint 5 flow">
+            <div class="pipeline-step"><span class="step-number">1</span><span><strong>Listen</strong> with <code>contract.on(...)</code></span></div>
+            <div class="pipeline-step"><span class="step-number">2</span><span><strong>Receive</strong> the mined Solidity event</span></div>
+            <div class="pipeline-step"><span class="step-number">3</span><span><strong>Re-fetch</strong> authoritative contract view data</span></div>
+            <div class="pipeline-step"><span class="step-number">4</span><span><strong>Render</strong> feed, profile, or earnings automatically</span></div>
+            <div class="pipeline-step"><span class="step-number">5</span><span><strong>No reload</strong> and no polling loop</span></div>
           </div>
         </div>
       </section>
@@ -45,7 +45,7 @@
       <div id="appAlert" class="app-alert alert-info" hidden></div>
 
       <section class="grid two">
-        <article class="card">
+        <article id="walletPanel" class="card">
           <div class="card-header">
             <h3>Wallet & on-chain Registry</h3>
             <p>The active MetaMask address is detected directly; no wallet-address input is used.</p>
@@ -72,20 +72,28 @@
           </div>
         </article>
 
-        <article class="card">
+        <article id="eventSyncPanel" class="card live-sync-card">
           <div class="card-header role-title">
             <div>
-              <h3>Checkpoint 4 boundary</h3>
-              <p>Marketplace reads and transactions are complete; cross-window event syncing comes next.</p>
+              <h3>Live Event Sync</h3>
+              <p>Each tab listens directly to the deployed BountyPulse contract.</p>
             </div>
-            <span class="role-chip">CP4</span>
+            <span id="eventSyncBadge" class="status-badge status-warning">Detached</span>
           </div>
           <div class="card-body">
-            <div class="note">
-              This tab refreshes its own data after a transaction receipt and also provides a manual
-              <strong>Refresh from chain</strong> button. It intentionally has no
-              <code>contract.on(...)</code> listeners yet. Therefore a transaction made in another browser
-              window will not appear here automatically—that is the exact problem Checkpoint 5 solves.
+            <dl class="data-list event-data-list">
+              <div class="data-row"><dt>Listeners</dt><dd id="eventListenerCount">0 / 9</dd></div>
+              <div class="data-row"><dt>Events received</dt><dd id="eventCount">0</dd></div>
+              <div class="data-row"><dt>Last event</dt><dd id="lastEventName">None yet</dd></div>
+              <div class="data-row"><dt>Block</dt><dd id="lastEventBlock">—</dd></div>
+              <div class="data-row"><dt>Transaction</dt><dd id="lastEventTx">—</dd></div>
+              <div class="data-row"><dt>Last auto-sync</dt><dd id="lastEventSync">—</dd></div>
+            </dl>
+            <div class="note live-note">
+              A Solidity event is treated as a <strong>signal</strong>, not as the database itself.
+              The listener receives the event, then re-reads the affected values from
+              <code>BountyPulse.sol</code> and re-renders them. No <code>window.location.reload()</code>
+              and no periodic polling loop are used.
             </div>
           </div>
         </article>
@@ -119,7 +127,7 @@
                 <option value="id-asc">Oldest first</option>
               </select>
             </label>
-            <button id="refreshFeedBtn" class="btn btn-secondary" type="button">Refresh from chain</button>
+            <button id="refreshFeedBtn" class="btn btn-secondary" type="button">Manual refresh (fallback)</button>
           </div>
         </div>
         <div class="card-body">
@@ -270,7 +278,7 @@
       <section id="lastUploadPanel" class="card role-panel" hidden>
         <div class="card-header">
           <h3>Latest IPFS result</h3>
-          <p>Checkpoint 3's upload proof remains available while using the Checkpoint 4 marketplace.</p>
+          <p>Checkpoint 3's IPFS proof remains available inside the finished event-driven DApp.</p>
         </div>
         <div class="card-body upload-summary">
           <div class="cid-box"><strong>CID:</strong> <span id="lastCid"></span></div>
@@ -288,7 +296,7 @@
         <div class="card-header role-title">
           <div>
             <h3>Activity log</h3>
-            <p>Use this during the viva to show the selected bid value, escrow verification, and claim verification.</p>
+            <p>Use this during the viva to show LIVE event detection, automatic refreshes, escrow verification, and claims.</p>
           </div>
           <button id="clearLogBtn" class="btn btn-ghost" type="button">Clear</button>
         </div>
@@ -301,7 +309,7 @@
     </main>
 
     <footer class="footer">
-      Local development only · Anvil Chain ID 31337 · Ethers.js v6 · Pinata/IPFS
+      Finished BountyPulse DApp · Anvil Chain ID 31337 · Ethers.js v6 · Pinata/IPFS · Event-driven sync
     </footer>
   </div>
 

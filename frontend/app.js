@@ -28,6 +28,23 @@
   const STATUS_LABELS = ["Open", "Locked", "Submitted", "Disputed", "Resolved"];
   const RESOLUTION_LABELS = ["None", "Client Won", "Freelancer Won"];
 
+  // Checkpoint 5: each Solidity event declares the smallest set of view data
+  // that must be re-fetched after the event. The event is only a signal; the
+  // authoritative UI values are always read back from BountyPulse.sol.
+  const EVENT_REFRESH_PLAN = Object.freeze({
+    UserRegistered:   { registry: true,  feed: true,  earnings: false },
+    BountyPosted:     { registry: false, feed: true,  earnings: false },
+    BidSubmitted:     { registry: false, feed: true,  earnings: false },
+    BountyFunded:     { registry: false, feed: true,  earnings: false },
+    WorkSubmitted:    { registry: false, feed: true,  earnings: false },
+    WorkApproved:     { registry: true,  feed: true,  earnings: true  },
+    BountyDisputed:   { registry: false, feed: true,  earnings: false },
+    DisputeResolved:  { registry: true,  feed: true,  earnings: true  },
+    FundsClaimed:     { registry: false, feed: false, earnings: true  }
+  });
+
+  const LIVE_EVENT_NAMES = Object.freeze(Object.keys(EVENT_REFRESH_PLAN));
+
   // This fallback keeps the page debuggable if the exported ABI is temporarily missing.
   // The normal project path is still to load frontend/BountyPulseABI.json from Checkpoint 2.
   const MINIMAL_ABI = [
@@ -79,6 +96,19 @@
     profileCache: new Map(),
     metadataCache: new Map(),
     unclaimedBalance: 0n,
+
+    // Checkpoint 5 event-stream state. Keeping the listened-on contract separate
+    // lets us detach cleanly when MetaMask changes account/network and prevents
+    // duplicate listeners from accumulating across reconnects.
+    eventContract: null,
+    eventHandlers: new Map(),
+    eventSyncGeneration: 0,
+    eventCount: 0,
+    eventRefreshTimer: null,
+    eventRefreshRunning: false,
+    pendingEventRefresh: { registry: false, feed: false, earnings: false },
+    pendingEventReasons: new Set(),
+    seenEventKeys: new Set(),
 
     async init() {
       this.bindDomEvents();
@@ -161,8 +191,8 @@
         }
       });
 
-      // Deliberately no contract.on(...) listeners here.
-      // Cross-window live synchronization is the boundary for Checkpoint 5.
+      // Wallet events are separate from smart-contract events.
+      // Contract listeners are attached after BountyPulse is instantiated in connectWithAccount().
     },
 
     async loadAbi() {
@@ -174,8 +204,8 @@
         this.log("Loaded complete ABI from BountyPulseABI.json.");
         return abi;
       } catch (error) {
-        console.warn("Using minimal Checkpoint 4 ABI:", error);
-        this.log("BountyPulseABI.json was not found; using the built-in Checkpoint 4 fallback ABI.");
+        console.warn("Using minimal Checkpoint 5 ABI:", error);
+        this.log("BountyPulseABI.json was not found; using the built-in Checkpoint 5 fallback ABI.");
         return MINIMAL_ABI;
       }
     },
@@ -196,8 +226,11 @@
     },
 
     async connectWithAccount(account) {
-      this.setBusy(true, "Reading wallet, Registry, and marketplace data…");
+      this.setBusy(true, "Reading wallet, Registry, marketplace data, and live event stream…");
       try {
+        // A reconnect creates a new Contract instance. Remove listeners from the
+        // previous instance first so accountsChanged/chainChanged never stacks them.
+        await this.teardownContractListeners();
         this.provider = new ethers.BrowserProvider(global.ethereum);
         const network = await this.provider.getNetwork();
         const actualChainId = Number(network.chainId);
@@ -237,13 +270,17 @@
           this.signer
         );
 
+        // Arm all Solidity event listeners before the initial render so this tab
+        // cannot miss a state-changing transaction performed by another window.
+        await this.installContractListeners();
+
         this.arbiterAddress = ethers.getAddress(await this.contract.arbiter());
         this.profileCache.clear();
         await this.refreshRegistryView();
         await this.refreshDashboardData(false);
         this.updateWalletHeader();
         this.setConnectionState("Connected", "success");
-        this.showAlert("success", "MetaMask, Anvil, BountyPulse, and the marketplace feed are connected.");
+        this.showAlert("success", "MetaMask, Anvil, BountyPulse, and all live contract event listeners are connected.");
       } catch (error) {
         this.resetContractState();
         this.handleError(error, "DApp initialization failed");
@@ -381,6 +418,216 @@
       } finally {
         this.setBusy(false);
       }
+    },
+
+    async installContractListeners() {
+      if (!this.contract) return;
+
+      const listenedContract = this.contract;
+      const generation = ++this.eventSyncGeneration;
+      this.eventContract = listenedContract;
+      this.eventHandlers.clear();
+      this.setEventSyncState("Arming listeners…", "warning");
+
+      try {
+        for (const eventName of LIVE_EVENT_NAMES) {
+          const handler = (...args) => {
+            // Ignore callbacks from a Contract instance that was superseded by
+            // accountsChanged/chainChanged while an asynchronous callback was queued.
+            if (
+              this.eventContract !== listenedContract ||
+              this.eventSyncGeneration !== generation
+            ) {
+              return;
+            }
+            this.handleContractEvent(eventName, args);
+          };
+
+          this.eventHandlers.set(eventName, handler);
+          await listenedContract.on(eventName, handler);
+        }
+
+        const listenerCount = await listenedContract.listenerCount();
+        this.updateText("#eventListenerCount", `${listenerCount} / ${LIVE_EVENT_NAMES.length}`);
+        this.setEventSyncState("Live · listening", "success");
+        this.log(`Checkpoint 5 live sync armed: ${listenerCount} contract event listeners.`);
+      } catch (error) {
+        this.setEventSyncState("Listener error", "danger");
+        throw new Error(`Could not attach BountyPulse event listeners: ${this.errorMessage(error)}`);
+      }
+    },
+
+    async teardownContractListeners() {
+      const previous = this.eventContract;
+      this.eventContract = null;
+      this.eventSyncGeneration += 1;
+
+      if (this.eventRefreshTimer) {
+        clearTimeout(this.eventRefreshTimer);
+        this.eventRefreshTimer = null;
+      }
+
+      this.pendingEventRefresh = { registry: false, feed: false, earnings: false };
+      this.pendingEventReasons.clear();
+
+      if (previous) {
+        try {
+          // This Contract instance is owned only by this App, so removing all of
+          // its listeners is safe and prevents duplicate callbacks after reconnects.
+          await previous.removeAllListeners();
+        } catch (error) {
+          console.warn("Could not fully detach old BountyPulse listeners:", error);
+        }
+      }
+
+      this.eventHandlers.clear();
+      this.updateText("#eventListenerCount", `0 / ${LIVE_EVENT_NAMES.length}`);
+      this.setEventSyncState("Detached", "warning");
+    },
+
+    handleContractEvent(eventName, args) {
+      const payload = args[args.length - 1];
+      const eventLog = payload?.log || payload || {};
+      const transactionHash = eventLog.transactionHash || "";
+      const blockNumber = eventLog.blockNumber ?? "?";
+      const logIndex = eventLog.index ?? eventLog.logIndex ?? "?";
+      const eventKey = transactionHash
+        ? `${eventName}:${transactionHash}:${logIndex}`
+        : `${eventName}:${blockNumber}:${logIndex}`;
+
+      // Some injected providers may replay a filter result after reconnecting.
+      // De-duplicate by transaction hash + log index so the UI does not refresh twice.
+      if (this.seenEventKeys.has(eventKey)) return;
+      this.seenEventKeys.add(eventKey);
+      if (this.seenEventKeys.size > 250) {
+        const oldest = this.seenEventKeys.values().next().value;
+        this.seenEventKeys.delete(oldest);
+      }
+
+      this.eventCount += 1;
+      this.updateText("#eventCount", String(this.eventCount));
+      this.updateText("#lastEventName", eventName);
+      this.updateText("#lastEventBlock", String(blockNumber));
+      this.updateText(
+        "#lastEventTx",
+        transactionHash ? this.shortHash(transactionHash) : "Unavailable"
+      );
+      this.setEventSyncState("Event received · syncing", "success");
+
+      const description = this.describeContractEvent(eventName, args);
+      this.log(`LIVE ${eventName}${description ? ` — ${description}` : ""}; refreshing from chain without reload.`);
+
+      const plan = EVENT_REFRESH_PLAN[eventName] || {
+        registry: true,
+        feed: true,
+        earnings: true
+      };
+      this.scheduleEventRefresh(plan, eventName);
+    },
+
+    describeContractEvent(eventName, args) {
+      try {
+        switch (eventName) {
+          case "UserRegistered":
+            return `${this.shortAddress(args[0])} registered as ${ROLE_LABELS[Number(args[1])] || args[1]}`;
+          case "BountyPosted":
+            return `bounty #${args[0]} posted with max ${ethers.formatEther(BigInt(args[2]))} ETH`;
+          case "BidSubmitted":
+            return `bid #${args[1]} on bounty #${args[0]} for ${ethers.formatEther(BigInt(args[3]))} ETH`;
+          case "BountyFunded":
+            return `bounty #${args[0]} locked with ${ethers.formatEther(BigInt(args[3]))} ETH escrow`;
+          case "WorkSubmitted":
+            return `work submitted for bounty #${args[0]}`;
+          case "WorkApproved":
+            return `bounty #${args[0]} approved; Freelancer credited ${ethers.formatEther(BigInt(args[2]))} ETH`;
+          case "BountyDisputed":
+            return `bounty #${args[0]} marked Disputed`;
+          case "DisputeResolved":
+            return `bounty #${args[0]} resolved as ${RESOLUTION_LABELS[Number(args[1])] || args[1]}`;
+          case "FundsClaimed":
+            return `${this.shortAddress(args[0])} claimed ${ethers.formatEther(BigInt(args[1]))} ETH`;
+          default:
+            return "";
+        }
+      } catch {
+        return "";
+      }
+    },
+
+    scheduleEventRefresh(plan, eventName) {
+      this.pendingEventRefresh.registry ||= Boolean(plan.registry);
+      this.pendingEventRefresh.feed ||= Boolean(plan.feed);
+      this.pendingEventRefresh.earnings ||= Boolean(plan.earnings);
+      this.pendingEventReasons.add(eventName);
+
+      // A single transaction may emit more than one event. Debouncing coalesces
+      // them into one set of view calls instead of re-rendering repeatedly.
+      if (this.eventRefreshTimer) clearTimeout(this.eventRefreshTimer);
+      this.eventRefreshTimer = setTimeout(() => {
+        this.eventRefreshTimer = null;
+        void this.flushEventRefresh();
+      }, 180);
+    },
+
+    async flushEventRefresh() {
+      if (!this.contract || !this.account) return;
+
+      if (this.eventRefreshRunning) {
+        this.scheduleEventRefresh(this.pendingEventRefresh, "queued-event");
+        return;
+      }
+
+      const plan = { ...this.pendingEventRefresh };
+      const reasons = [...this.pendingEventReasons];
+      this.pendingEventRefresh = { registry: false, feed: false, earnings: false };
+      this.pendingEventReasons.clear();
+      this.eventRefreshRunning = true;
+
+      try {
+        const tasks = [];
+        if (plan.registry) tasks.push(this.refreshRegistryView());
+        if (plan.feed) tasks.push(this.refreshBountyFeed());
+        if (plan.earnings) tasks.push(this.refreshWithdrawableBalance());
+        await Promise.all(tasks);
+
+        const now = new Date().toLocaleTimeString();
+        this.updateText("#lastEventSync", now);
+        this.setEventSyncState("Live · synced", "success");
+        this.log(`Auto-sync complete for ${reasons.join(", ") || "contract event"}. No page reload used.`);
+
+        if (plan.feed) this.flashElement("#marketplacePanel");
+        if (plan.earnings && !$("#earningsPanel").hidden) this.flashElement("#earningsPanel");
+        if (plan.registry) this.flashElement("#walletPanel");
+      } catch (error) {
+        this.setEventSyncState("Sync retry needed", "danger");
+        this.handleError(error, "Live event was received but its view-data refresh failed");
+      } finally {
+        this.eventRefreshRunning = false;
+
+        if (
+          this.pendingEventRefresh.registry ||
+          this.pendingEventRefresh.feed ||
+          this.pendingEventRefresh.earnings
+        ) {
+          this.scheduleEventRefresh(this.pendingEventRefresh, "queued-event");
+        }
+      }
+    },
+
+    setEventSyncState(text, kind = "info") {
+      const badge = $("#eventSyncBadge");
+      if (!badge) return;
+      badge.textContent = text;
+      badge.className = `status-badge status-${kind}`;
+    },
+
+    flashElement(selector) {
+      const node = $(selector);
+      if (!node) return;
+      node.classList.remove("live-flash");
+      void node.offsetWidth;
+      node.classList.add("live-flash");
+      setTimeout(() => node.classList.remove("live-flash"), 900);
     },
 
     async refreshDashboardData(showMessage = false) {
@@ -1275,6 +1522,9 @@
     },
 
     resetContractState() {
+      // resetContractState is intentionally synchronous because it is also used by
+      // wallet event callbacks. Listener cleanup continues safely in the background.
+      void this.teardownContractListeners();
       this.signer = null;
       this.contract = null;
       this.currentUser = null;
@@ -1282,6 +1532,13 @@
       this.arbiterAddress = null;
       this.bounties = [];
       this.unclaimedBalance = 0n;
+      this.eventCount = 0;
+      this.seenEventKeys.clear();
+      this.updateText("#eventCount", "0");
+      this.updateText("#lastEventName", "None yet");
+      this.updateText("#lastEventBlock", "—");
+      this.updateText("#lastEventTx", "—");
+      this.updateText("#lastEventSync", "—");
       this.hideAllRolePanels();
       $("#earningsPanel").hidden = true;
       $("#bountyFeed").innerHTML = '<div class="empty-state"><strong>Connect MetaMask</strong><span>The feed is loaded from the contract after connection.</span></div>';
@@ -1389,4 +1646,7 @@
 
   global.App = App;
   document.addEventListener("DOMContentLoaded", () => App.init());
+  global.addEventListener("beforeunload", () => {
+    void App.teardownContractListeners();
+  });
 })(window);
